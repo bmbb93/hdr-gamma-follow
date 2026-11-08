@@ -20,8 +20,14 @@ use windows::core::{BOOL, HSTRING, PCWSTR, w};
 
 const WM_TRAY: u32 = WM_APP + 1;
 const TIMER_POLL: usize = 1;
+const TIMER_SCREEN_OFF: usize = 2;
+/// クリックの直後に消すと、指を離したときのマウスの揺れで点き直すので少し待つ
+const SCREEN_OFF_DELAY_MS: u32 = 600;
 const ID_QUIT: usize = 1;
 const ID_PANEL: usize = 2;
+const ID_SCREEN_OFF: usize = 3;
+/// ディスプレイの点灯状態の通知 (GUID_CONSOLE_DISPLAY_STATE)
+const GUID_CONSOLE_DISPLAY_STATE: windows::core::GUID = windows::core::GUID::from_u128(0x6fe69556_704a_47a0_8f24_c28d936fda47);
 const ID_GAMMA0: usize = 10;
 
 // パネルのレイアウト (DIP)
@@ -32,6 +38,7 @@ const TRACK_DY: f64 = 44.0;
 const GAMMA_H: f64 = 32.0;
 const SEG_W: f64 = 60.0;
 const SEG_GAP: f64 = 6.0;
+const OFF_H: f64 = 32.0;
 
 const fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
     COLORREF(r as u32 | (g as u32) << 8 | (b as u32) << 16)
@@ -173,6 +180,11 @@ pub fn run() {
         poll_now();
         set_tray(NIM_ADD);
         SetTimer(Some(main), TIMER_POLL, app::POLL_MS, None);
+        let _ = windows::Win32::System::Power::RegisterPowerSettingNotification(
+            HANDLE(main.0),
+            &GUID_CONSOLE_DISPLAY_STATE,
+            DEVICE_NOTIFY_WINDOW_HANDLE,
+        );
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -336,6 +348,7 @@ fn show_menu() {
         }
         let _ = AppendMenuW(m, MF_SEPARATOR, 0, PCWSTR::null());
         let _ = AppendMenuW(m, MF_STRING, ID_PANEL, w!("明るさとガンマの調整…"));
+        let _ = AppendMenuW(m, MF_STRING, ID_SCREEN_OFF, w!("画面を消す"));
         let _ = AppendMenuW(m, MF_SEPARATOR, 0, PCWSTR::null());
         let _ = AppendMenuW(m, MF_STRING, ID_QUIT, w!("終了"));
         let mut pt = POINT::default();
@@ -349,9 +362,19 @@ fn show_menu() {
                 let _ = DestroyWindow(main);
             }
             ID_PANEL => show_popup(),
+            ID_SCREEN_OFF => request_screen_off(),
             c if (ID_GAMMA0..ID_GAMMA0 + GAMMAS.len()).contains(&c) => set_gamma(GAMMAS[c - ID_GAMMA0]),
             _ => {}
         }
+    }
+}
+
+/// 少し待ってから画面を消す（パネルは先に閉じる）
+fn request_screen_off() {
+    let main = with_ui(|u| u.main);
+    hide_popup();
+    unsafe {
+        SetTimer(Some(main), TIMER_SCREEN_OFF, SCREEN_OFF_DELAY_MS, None);
     }
 }
 
@@ -368,8 +391,32 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
     unsafe {
         match msg {
             WM_TIMER => {
-                poll_now();
+                if wp.0 == TIMER_SCREEN_OFF {
+                    let _ = KillTimer(Some(hwnd), TIMER_SCREEN_OFF);
+                    app::log("screen off");
+                    display::screen_off();
+                } else {
+                    poll_now();
+                }
                 LRESULT(0)
+            }
+            WM_POWERBROADCAST => {
+                if wp.0 as u32 == PBT_POWERSETTINGCHANGE && lp.0 != 0 {
+                    let s = &*(lp.0 as *const windows::Win32::System::Power::POWERBROADCAST_SETTING);
+                    if s.PowerSetting == GUID_CONSOLE_DISPLAY_STATE {
+                        let state = s.Data[0];
+                        app::log(match state {
+                            0 => "display off",
+                            1 => "display on",
+                            _ => "display dimmed",
+                        });
+                        if state == 1 {
+                            // 点き直したら、明るさやモードが変わっていないかすぐ確かめる
+                            poll_now();
+                        }
+                    }
+                }
+                LRESULT(1)
             }
             WM_TRAY => {
                 match (lp.0 as u32) & 0xFFFF {
@@ -406,7 +453,7 @@ fn px(u: &Ui, v: f64) -> i32 {
 
 fn panel_size(u: &Ui) -> (i32, i32) {
     let rows = u.rows.len().max(1) as f64;
-    (px(u, W), px(u, PAD + rows * ROW_H + 8.0 + GAMMA_H + PAD))
+    (px(u, W), px(u, PAD + rows * ROW_H + 8.0 + GAMMA_H + 12.0 + OFF_H + PAD))
 }
 
 fn track_x(u: &Ui) -> (i32, i32) {
@@ -427,6 +474,11 @@ fn seg_rect(u: &Ui, j: usize) -> RECT {
     RECT { left: px(u, start), top, right: px(u, start + SEG_W), bottom: top + px(u, GAMMA_H) }
 }
 
+fn off_rect(u: &Ui) -> RECT {
+    let top = gamma_top(u) + px(u, GAMMA_H + 12.0);
+    RECT { left: px(u, PAD), top, right: px(u, W - PAD), bottom: top + px(u, OFF_H) }
+}
+
 fn value_from_x(u: &Ui, x: i32) -> u32 {
     let (x0, x1) = track_x(u);
     (((x - x0) as f64 / (x1 - x0) as f64) * 100.0).round().clamp(0.0, 100.0) as u32
@@ -435,6 +487,7 @@ fn value_from_x(u: &Ui, x: i32) -> u32 {
 enum Hit {
     Slider(usize),
     Gamma(usize),
+    ScreenOff,
     Nothing,
 }
 
@@ -452,6 +505,10 @@ fn hit_test(u: &Ui, x: i32, y: i32) -> Hit {
         if x >= r.left && x < r.right && y >= r.top && y < r.bottom {
             return Hit::Gamma(j);
         }
+    }
+    let r = off_rect(u);
+    if x >= r.left && x < r.right && y >= r.top && y < r.bottom {
+        return Hit::ScreenOff;
     }
     Hit::Nothing
 }
@@ -646,6 +703,7 @@ unsafe extern "system" fn popup_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARA
                         on_drag(x);
                     }
                     Hit::Gamma(j) => set_gamma(GAMMAS[j]),
+                    Hit::ScreenOff => request_screen_off(),
                     Hit::Nothing => {}
                 }
                 LRESULT(0)
@@ -772,6 +830,10 @@ fn paint(hwnd: HWND) {
                 let (c, f) = if sel { (rgb(0, 0, 0), u.font_bold) } else { (TEXT, u.font) };
                 text(mem, &format!("{g:.1}"), r, c, f, DT_CENTER);
             }
+
+            let r = off_rect(u);
+            fill_round(mem, r, px(u, 8.0), SEG);
+            text(mem, "画面を消す", r, TEXT, u.font, DT_CENTER);
         });
 
         let _ = BitBlt(hdc, 0, 0, rc.right, rc.bottom, Some(mem), 0, 0, SRCCOPY);

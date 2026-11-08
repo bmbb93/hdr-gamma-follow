@@ -176,3 +176,14 @@ pub fn slider_to_nits(v: u32) -> u32 {
 pub fn nits_to_slider(nits: u32) -> u32 {
     ((nits.max(80) - 80 + 2) / 4).min(100)
 }
+
+/// すべてのディスプレイを消す（モニターの省電力状態）。マウスやキーボードの入力で戻る。
+/// 呼んだ直後のマウスの揺れやキーを離す動作でもすぐ点くので、呼ぶ側で少し待ってから使う。
+pub fn screen_off() {
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{HWND_BROADCAST, PostMessageW, SC_MONITORPOWER, WM_SYSCOMMAND};
+    unsafe {
+        // SendMessage だと応答しないウィンドウで止まるので Post にする
+        let _ = PostMessageW(Some(HWND_BROADCAST), WM_SYSCOMMAND, WPARAM(SC_MONITORPOWER as usize), LPARAM(2));
+    }
+}

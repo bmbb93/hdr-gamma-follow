@@ -5,6 +5,7 @@
 //!   hdr-gamma-follow.exe --nits 240      HDR ディスプレイの SDR 明るさを設定
 //!   hdr-gamma-follow.exe --once          今の明るさとガンマで 1 回だけ適用
 //!   hdr-gamma-follow.exe --flash         切替が画面に効くかの目視テスト（3 秒だけ極端に暗いカーブ）
+//!   hdr-gamma-follow.exe --screen-off    画面を消す（マウスやキーの入力で戻る）
 #![windows_subsystem = "windows"]
 
 mod app;
@@ -116,6 +117,12 @@ fn main() {
                     let ok = display::set_sdr_white(d.target_adapter, d.target, n, true);
                     println!("{}: SDR white -> {n} nits ({})", d.name, if ok { "ok" } else { "failed" });
                 }
+            }
+            "--screen-off" => {
+                // Enter を離す動作で点き直さないよう少し待つ
+                std::thread::sleep(std::time::Duration::from_millis(600));
+                display::screen_off();
+                return;
             }
             "--info" => {
                 info();
