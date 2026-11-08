@@ -26,6 +26,50 @@ fn already_running() -> bool {
     }
 }
 
+/// Windows がアプリに伝えている輝度 (DXGI) と、今の HDR プロファイル・SDR 白レベルを表示する。
+fn info() {
+    use windows::Win32::Graphics::Dxgi::*;
+    use windows::core::Interface;
+    unsafe {
+        let Ok(f) = CreateDXGIFactory1::<IDXGIFactory1>() else { return };
+        let mut i = 0;
+        while let Ok(a) = f.EnumAdapters1(i) {
+            let mut j = 0;
+            while let Ok(o) = a.EnumOutputs(j) {
+                if let Ok(d) = o.cast::<IDXGIOutput6>().and_then(|o6| o6.GetDesc1()) {
+                    let len = d.DeviceName.iter().position(|&c| c == 0).unwrap_or(d.DeviceName.len());
+                    println!(
+                        "{}: DXGI max {:.0} nits / full-frame {:.0} nits / min {:.4} nits, {} bpc, colorspace {}",
+                        String::from_utf16_lossy(&d.DeviceName[..len]),
+                        d.MaxLuminance,
+                        d.MaxFullFrameLuminance,
+                        d.MinLuminance,
+                        d.BitsPerColor,
+                        d.ColorSpace.0
+                    );
+                }
+                j += 1;
+            }
+            i += 1;
+        }
+    }
+    for d in display::displays().unwrap_or_default() {
+        let scope = colorprof::user_scope(d.adapter, d.source);
+        println!(
+            "{} (source {}): HDR {}, SDR white {} nits, EDID {}, HDR profile {:?}",
+            d.name,
+            d.source,
+            if d.hdr { "on" } else { "off" },
+            d.nits,
+            match d.lum {
+                Some(l) => format!("peak {:.0} / full-frame {:.0} / min {:.4} nits", l.max, l.full_frame, l.min),
+                None => "no HDR info".to_string(),
+            },
+            colorprof::get_default_hdr(scope, d.adapter, d.source)
+        );
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
@@ -73,6 +117,10 @@ fn main() {
                     println!("{}: SDR white -> {n} nits ({})", d.name, if ok { "ok" } else { "failed" });
                 }
             }
+            "--info" => {
+                info();
+                return;
+            }
             "--debug-set-default" => {
                 // 検証用: HDR ディスプレイの既定プロファイルを外から書き換える（外部変更の検出テスト）
                 let name = it.next().expect("--debug-set-default <profile>");
@@ -88,8 +136,12 @@ fn main() {
                 std::fs::create_dir_all(&dir).unwrap();
                 for nits in (80..=480).step_by(4) {
                     for g in profile::GAMMAS {
-                        std::fs::write(dir.join(profile::profile_name(nits, g)), profile::make_profile(nits, g))
-                            .unwrap();
+                        // EDID なし（従来の 800 nits）で書き出す。Python 版とのバイト比較用
+                        std::fs::write(
+                            dir.join(profile::profile_name(nits, g, None)),
+                            profile::make_profile(nits, g, None),
+                        )
+                        .unwrap();
                     }
                 }
                 return;

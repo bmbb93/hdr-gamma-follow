@@ -1,8 +1,11 @@
 //! DisplayConfig API: アクティブなディスプレイの HDR 状態と SDR 白レベルの取得・設定。
 
+use crate::profile::Lum;
 use std::mem::size_of;
 use windows::Win32::Devices::Display::*;
 use windows::Win32::Foundation::LUID;
+use windows::Win32::System::Registry::{HKEY_LOCAL_MACHINE, RRF_RT_REG_BINARY, RegGetValueW};
+use windows::core::HSTRING;
 
 /// (target adapter HighPart, LowPart, source id)
 pub type Key = (i32, u32, u32);
@@ -19,6 +22,54 @@ pub struct Display {
     pub hdr: bool,
     pub nits: u32,
     pub name: String,
+    /// モニターが EDID で申告している HDR の最大・最小輝度（モードで変わることがある）
+    pub lum: Option<Lum>,
+}
+
+/// EDID の CTA-861 拡張にある HDR Static Metadata Data Block から最大・最小輝度を読む。
+pub fn parse_edid_lum(edid: &[u8]) -> Option<Lum> {
+    for ext in edid.chunks_exact(128).skip(1) {
+        if ext[0] != 0x02 {
+            continue;
+        }
+        let end = (ext[2] as usize).min(127);
+        let mut i = 4;
+        while i < end {
+            let (tag, len) = (ext[i] >> 5, (ext[i] & 0x1F) as usize);
+            if tag == 7 && len >= 1 && ext.get(i + 1) == Some(&6) {
+                let h = &ext[i + 2..(i + 1 + len).min(128)];
+                // h[0]=EOTF, h[1]=metadata descriptor, h[2]=max, h[3]=max frame-avg, h[4]=min
+                if h.len() < 3 || h[2] == 0 {
+                    return None;
+                }
+                let max = 50.0 * 2f64.powf(h[2] as f64 / 32.0);
+                let full_frame =
+                    if h.len() >= 4 && h[3] != 0 { (50.0 * 2f64.powf(h[3] as f64 / 32.0)).min(max) } else { max };
+                let min = if h.len() >= 5 { max * (h[4] as f64 / 255.0).powi(2) / 100.0 } else { 0.0 };
+                return Some(Lum { max, full_frame, min });
+            }
+            i += 1 + len;
+        }
+    }
+    None
+}
+
+/// monitorDevicePath (\\?\DISPLAY#MSI4CD7#5&...&UID4353#{guid}) から、レジストリの EDID を読む。
+fn edid_lum(device_path: &str) -> Option<Lum> {
+    let parts: Vec<&str> = device_path.trim_start_matches(r"\\?\").split('#').collect();
+    if parts.len() < 3 {
+        return None;
+    }
+    let key = format!(r"SYSTEM\CurrentControlSet\Enum\{}\{}\{}\Device Parameters", parts[0], parts[1], parts[2]);
+    let (hk, hv) = (HSTRING::from(key), HSTRING::from("EDID"));
+    let mut buf = [0u8; 1024];
+    let mut size = buf.len() as u32;
+    unsafe {
+        RegGetValueW(HKEY_LOCAL_MACHINE, &hk, &hv, RRF_RT_REG_BINARY, None, Some(buf.as_mut_ptr() as _), Some(&mut size))
+            .ok()
+            .ok()?;
+    }
+    parse_edid_lum(&buf[..size as usize])
 }
 
 fn header(t: DISPLAYCONFIG_DEVICE_INFO_TYPE, size: usize, adapter: LUID, id: u32) -> DISPLAYCONFIG_DEVICE_INFO_HEADER {
@@ -73,6 +124,9 @@ pub fn displays() -> windows::core::Result<Vec<Display>> {
             DisplayConfigGetDeviceInfo(&mut tn.header);
             let raw = &tn.monitorFriendlyDeviceName;
             let len = raw.iter().position(|&c| c == 0).unwrap_or(raw.len());
+            let dp = &tn.monitorDevicePath;
+            let dp_len = dp.iter().position(|&c| c == 0).unwrap_or(dp.len());
+            let lum = edid_lum(&String::from_utf16_lossy(&dp[..dp_len]));
 
             let adv_value = adv.Anonymous.value;
             out.push(Display {
@@ -84,6 +138,7 @@ pub fn displays() -> windows::core::Result<Vec<Display>> {
                 hdr: adv_value & 2 != 0,
                 nits: (sdr.SDRWhiteLevel as f64 * 80.0 / 1000.0).round() as u32,
                 name: String::from_utf16_lossy(&raw[..len]),
+                lum,
             });
         }
         Ok(out)

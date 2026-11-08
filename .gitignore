@@ -9,3 +9,4 @@ tools/real_state.txt
 
 # dylanraga 版の配布プロファイル（表示名だけ変えたもの）。生成器で同等以上のものを作れるので含めない
 srgb_to_gamma2p2_*.icm
+tools/real_info.txt

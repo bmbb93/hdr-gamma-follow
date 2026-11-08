@@ -11,6 +11,45 @@ pub const DEFAULT_GAMMA: f64 = 2.2;
 const MIN_NITS: f64 = 0.0050048828125;
 const MAX_NITS: f64 = 800.0;
 
+/// MHC2 タグに書くディスプレイの最小・最大輝度。Windows はこの値で EDID を上書きしてアプリ (DXGI) に伝える。
+/// MHC2 の min/max がピーク・最小輝度、lumi タグ (luminanceTag) が全画面の最大輝度。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Lum {
+    pub max: f64,
+    pub full_frame: f64,
+    pub min: f64,
+}
+
+impl Lum {
+    /// 比較・ファイル名用に丸めた値 (max nits, full-frame nits, min 0.0001 nits 単位)
+    pub fn key(&self) -> (u32, u32, u32) {
+        (self.max.round() as u32, self.full_frame.round() as u32, (self.min * 10000.0).round() as u32)
+    }
+}
+
+/// lumi タグ (XYZType)。雛形の XYZ を Y が指定輝度になるよう比例で縮める。
+fn lumi_tag(template_lumi: &[u8], y_nits: f64) -> Vec<u8> {
+    let old_y = i32::from_be_bytes(template_lumi[12..16].try_into().unwrap()) as f64 / 65536.0;
+    let mut b = template_lumi[..8].to_vec();
+    for k in 0..3 {
+        let v = i32::from_be_bytes(template_lumi[8 + 4 * k..12 + 4 * k].try_into().unwrap()) as f64 / 65536.0;
+        b.extend_from_slice(&s15(v * y_nits / old_y));
+    }
+    b
+}
+
+fn template_tag(sig: &[u8; 4]) -> &'static [u8] {
+    let count = be32(TEMPLATE, 128) as usize;
+    (0..count)
+        .map(|i| 132 + 12 * i)
+        .find(|&at| &TEMPLATE[at..at + 4] == sig)
+        .map(|at| {
+            let (off, size) = (be32(TEMPLATE, at + 4) as usize, be32(TEMPLATE, at + 8) as usize);
+            &TEMPLATE[off..off + size]
+        })
+        .expect("template tag")
+}
+
 // --- ST 2084 (PQ) ---
 const M1: f64 = 2610.0 / 16384.0;
 const M2: f64 = 2523.0 / 4096.0 * 128.0;
@@ -151,18 +190,43 @@ pub fn rebuild(data: &[u8], replace: &[(&[u8; 4], Vec<u8>)]) -> Vec<u8> {
     out
 }
 
-pub fn profile_name(nits: u32, gamma: f64) -> String {
-    format!("gamma{}_auto_{}nits.icm", (gamma * 10.0).round() as i32, nits)
+/// lum が None（EDID に HDR 情報がない）のときは従来どおり 800 / 0.005 nits を書く。
+pub fn profile_name(nits: u32, gamma: f64, lum: Option<Lum>) -> String {
+    let g = (gamma * 10.0).round() as i32;
+    match lum {
+        None => format!("gamma{g}_auto_{nits}nits.icm"),
+        Some(l) => {
+            let (max, ff, min) = l.key();
+            format!("gamma{g}_auto_{nits}nits_{max}max_{ff}ff_{min}e-4min.icm")
+        }
+    }
 }
 
 pub fn is_auto_profile(name: &str) -> bool {
     name.starts_with("gamma") && name.contains("_auto_")
 }
 
-pub fn make_profile(nits: u32, gamma: f64) -> Vec<u8> {
-    let mhc2 = build_mhc2(&gamma_lut(nits as f64, gamma, 1024), MIN_NITS, MAX_NITS);
-    let desc = format!("sRGB to Gamma {gamma:.1} - SDR {nits} nits (auto)");
-    rebuild(TEMPLATE, &[(b"desc", mluc(&desc)), (b"MHC2", mhc2)])
+pub fn make_profile(nits: u32, gamma: f64, lum: Option<Lum>) -> Vec<u8> {
+    let lut = gamma_lut(nits as f64, gamma, 1024);
+    match lum {
+        None => {
+            let desc = format!("sRGB to Gamma {gamma:.1} - SDR {nits} nits (auto)");
+            rebuild(TEMPLATE, &[(b"desc", mluc(&desc)), (b"MHC2", build_mhc2(&lut, MIN_NITS, MAX_NITS))])
+        }
+        Some(l) => {
+            // ファイル名と中身を一致させるため、丸めた値を書く
+            let (kmax, kff, kmin) = l.key();
+            let desc = format!("sRGB to Gamma {gamma:.1} - SDR {nits} nits, peak {kmax} (auto)");
+            rebuild(
+                TEMPLATE,
+                &[
+                    (b"desc", mluc(&desc)),
+                    (b"lumi", lumi_tag(template_tag(b"lumi"), kff as f64)),
+                    (b"MHC2", build_mhc2(&lut, kmin as f64 / 10000.0, kmax as f64)),
+                ],
+            )
+        }
+    }
 }
 
 /// 切替が画面に効くかの目視テスト用。極端に暗いカーブ。

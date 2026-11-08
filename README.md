@@ -14,6 +14,7 @@ Windows の HDR モードは、SDR の映像やデスクトップを sRGB の区
 
 - SDR の白レベル（80〜480 nits、4 nits 刻みの全段階）とガンマに合ったプロファイルをその場で生成・インストールし、既定の HDR プロファイルにする
 - スライダーが止まってから 1 秒後に切り替える。前の自動プロファイルの関連付けは外す
+- モニターが EDID で申告している HDR の輝度（ピーク・全画面・最小）をプロファイルに書き込む。モニター側の HDR モードを切り替えて申告値が変わったら、作り直して切り替える
 - 設定アプリなどで既定のプロファイルを変えられても掛け直す
 - タスクトレイのパネルから、SDR の明るさ（nits）とガンマ（2.2 / 2.4 / 2.6）を調整する
 - HDR がオフのディスプレイには何もしない
@@ -52,6 +53,7 @@ pwsh -File install_task.ps1 -Remove
 | `hdr-gamma-follow.exe --nits 240` | SDR の明るさを設定 |
 | `hdr-gamma-follow.exe --once` | 今の設定で 1 回だけ適用 |
 | `hdr-gamma-follow.exe --flash` | 3 秒だけ極端に暗いカーブにして、切替が画面に効くか確かめる |
+| `hdr-gamma-follow.exe --info` | DXGI が報告している輝度、EDID の輝度、今の HDR プロファイルを表示 |
 
 設定（`config.json`）とログ（`follow.log`）は exe と同じフォルダに置かれます。環境変数 `HDRG_DEBUG=1` を付けると詳しいログを出します。
 
@@ -65,6 +67,14 @@ dylanraga 氏の生成スクリプト（NVIDIA 方式・黒レベル 0）と同�
 
 1024 点の LUT を MHC2 タグに入れます。配布版プロファイルとの差は最大でも 10bit の 1 段未満です。
 
+## 輝度の申告
+
+Windows は MHC2 プロファイルの輝度情報を EDID より優先し、アプリ（DXGI）に伝えます。MHC2 の min/max がピーク・最小輝度、`lumi` タグが全画面の最大輝度です。配布版プロファイルは一律で「最大 800 / 最小 0.005 nits」なので、そのままではモニターやモードに関係なく、ゲームには 800 nits のモニターとして伝わります。
+
+このツールは EDID の HDR Static Metadata（CTA-861）を読み、その値をプロファイルに書き込みます。たとえば MSI MPG 272UX は、True Black 400 では最大 465 / 全画面 265 nits、EOTF Boost では最大 1037 nits を申告します。モードを切り替えると EDID が変わるので、それに合わせてプロファイルを切り替えます。EDID に HDR 情報がないモニターでは、従来どおり 800 / 0.005 nits を書きます。
+
+`--info` で、DXGI が報告している輝度と EDID の値を確認できます。
+
 ## 注意
 
 - SDR の明るさの設定には、Windows の非公開 API（`DisplayConfigSetDeviceInfo` の `SET_SDR_WHITE_LEVEL`）を使っています。将来の Windows 更新で動かなくなる可能性があります。
@@ -76,10 +86,11 @@ dylanraga 氏の生成スクリプト（NVIDIA 方式・黒レベル 0）と同�
 | パス | 内容 |
 |---|---|
 | `rs/` | Rust 版（本体）。`ui.rs` トレイとパネル、`app.rs` 監視、`profile.rs` プロファイル生成、`display.rs` / `colorprof.rs` Windows API |
-| `*.py` | Python 版（参照実装）。`uv run --script hdr_gamma_follow.py` で動きます。`install_task.ps1 -Python` で Python 版を登録 |
+| `*.py` | Python 版（参照実装）。`uv run --script hdr_gamma_follow.py` で動きます。`install_task.ps1 -Python` で Python 版を登録。輝度は 800 nits 固定で、EDID は読みません |
 | `relabel_icc.py` | 既存の ICC プロファイルの表示名を書き換える小道具 |
 | `template.icm` | プロファイルの雛形（MHC2 以外のタグを流用） |
-| `tools/real_state.ps1` | 実レジストリの関連付けを書き出す確認用スクリプト |
+| `tools/edid_hdr.py` | レジストリに残っているモニターの EDID から HDR の輝度を表示する |
+| `tools/real_state.ps1` / `tools/real_info.ps1` | サンドボックス化された環境の外（タスク経由）で、関連付けや `--info` を確認するスクリプト |
 
 ## クレジット
 

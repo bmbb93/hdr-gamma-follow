@@ -76,9 +76,9 @@ fn ensure_installed(name: &str, data: impl FnOnce() -> Vec<u8>) -> Result<(), St
 }
 
 pub fn apply(d: &Display, gamma: f64, force: bool) -> Result<String, String> {
-    let nits = d.nits;
-    let name = profile::profile_name(nits, gamma);
-    ensure_installed(&name, || profile::make_profile(nits, gamma))?;
+    let (nits, lum) = (d.nits, d.lum);
+    let name = profile::profile_name(nits, gamma, lum);
+    ensure_installed(&name, || profile::make_profile(nits, gamma, lum))?;
     let scope = cp::user_scope(d.adapter, d.source);
     let prev = cp::get_default_hdr(scope, d.adapter, d.source);
     if prev.as_deref() != Some(name.as_str()) || force {
@@ -91,10 +91,14 @@ pub fn apply(d: &Display, gamma: f64, force: bool) -> Result<String, String> {
         }
     }
     log(&format!(
-        "source {}: SDR white {} nits, gamma {:.1} -> {} (was {})",
+        "source {}: SDR white {} nits, gamma {:.1}, {} -> {} (was {})",
         d.source,
         nits,
         gamma,
+        match lum {
+            Some(l) => format!("EDID peak {:.0} / full-frame {:.0} / min {:.4} nits", l.max, l.full_frame, l.min),
+            None => "no EDID HDR info (800 nits)".to_string(),
+        },
         name,
         prev.as_deref().unwrap_or("None")
     ));
@@ -122,7 +126,7 @@ pub struct App {
     /// 次の poll では明るさの変化を待たずに即適用する（自前のスライダーで確定したとき）
     pub skip_settle: bool,
     cfg_mtime: Option<SystemTime>,
-    applied: HashMap<Key, (bool, u32, f64)>,
+    applied: HashMap<Key, (bool, u32, f64, Option<(u32, u32, u32)>)>,
     pending: HashMap<Key, ((bool, u32), Instant)>,
     subkeys: HashMap<Key, String>,
 }
@@ -166,7 +170,8 @@ impl App {
             }
         };
         for d in &ds {
-            let state = (d.hdr, d.nits, gamma);
+            // 輝度 (EDID) はモニターのモード切替で変わる。ガンマと同じく変化したら即時に適用する
+            let state = (d.hdr, d.nits, gamma, d.lum.map(|l| l.key()));
             let prev = self.applied.get(&d.key).copied();
             if prev == Some(state) {
                 self.pending.remove(&d.key);
@@ -180,7 +185,7 @@ impl App {
                         if debug() {
                             log(&format!("  registry default = {cur:?}"));
                         }
-                        let want = profile::profile_name(d.nits, gamma);
+                        let want = profile::profile_name(d.nits, gamma, d.lum);
                         if cur.as_deref() != Some(want.as_str()) {
                             log(&format!(
                                 "source {}: default changed externally to {}; re-applying",
@@ -222,7 +227,14 @@ impl App {
         }
         self.skip_settle = false;
 
-        let hdr: Vec<String> = ds.iter().filter(|d| d.hdr).map(|d| format!("{} nits", d.nits)).collect();
+        let hdr: Vec<String> = ds
+            .iter()
+            .filter(|d| d.hdr)
+            .map(|d| match d.lum {
+                Some(l) => format!("{} nits (peak {:.0})", d.nits, l.max),
+                None => format!("{} nits", d.nits),
+            })
+            .collect();
         let status =
             format!("Gamma {gamma:.1} / {}", if hdr.is_empty() { "HDR off".to_string() } else { hdr.join(", ") });
         self.displays = ds;
