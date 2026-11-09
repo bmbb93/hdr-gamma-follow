@@ -1,8 +1,8 @@
 # hdr-gamma-follow
 
-Windows 11 の HDR で、SDR コンテンツの表示を sRGB のトーンカーブから Gamma 2.2 / 2.4 / 2.6 に置き換える常駐ツールです。「SDR コンテンツの明るさ」スライダーに追従して、カラープロファイル（MHC2）を自動で作り直し、切り替えます。
+Windows 11 の HDR で、SDR コンテンツの表示を sRGB のトーンカーブから Gamma 1.8 / 2.0 / 2.2 / 2.4 / 2.6 に置き換える常駐ツールです。「SDR コンテンツの明るさ」スライダーに追従して、カラープロファイル（MHC2）を自動で作り直し、切り替えます。
 
-*Windows 11 HDR tray app that keeps an sRGB→gamma 2.2/2.4/2.6 MHC2 color profile in sync with the "SDR content brightness" slider.*
+*Windows 11 HDR tray app that keeps an sRGB→gamma 1.8–2.6 MHC2 color profile in sync with the "SDR content brightness" slider.*
 
 ## なぜ必要か
 
@@ -16,7 +16,7 @@ Windows の HDR モードは、SDR の映像やデスクトップを sRGB の区
 - スライダーが止まってから 1 秒後に切り替える。前の自動プロファイルの関連付けは外す
 - モニターが EDID で申告している HDR の輝度（ピーク・全画面・最小）をプロファイルに書き込む。モニター側の HDR モードを切り替えて申告値が変わったら、作り直して切り替える
 - 設定アプリなどで既定のプロファイルを変えられても掛け直す
-- タスクトレイのパネルから、SDR の明るさ（nits）とガンマ（2.2 / 2.4 / 2.6）を調整する
+- タスクトレイのパネルから、SDR の明るさ（nits）とガンマ（1.8 / 2.0 / 2.2 / 2.4 / 2.6、既定 2.2）を調整する
 - 画面をすぐ消す（席を離れるときの OLED の焼き付け対策などに）
 - HDR がオフのディスプレイには何もしない
 - 管理者権限は不要

@@ -97,7 +97,7 @@ fn main() {
             "--gamma" => {
                 let g: f64 = it.next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
                 if !profile::GAMMAS.contains(&g) {
-                    eprintln!("--gamma は 2.2 / 2.4 / 2.6 のいずれか");
+                    eprintln!("--gamma は 1.8 / 2.0 / 2.2 / 2.4 / 2.6 のいずれか");
                     std::process::exit(2);
                 }
                 app::save_gamma(g);

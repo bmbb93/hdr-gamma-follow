@@ -13,7 +13,7 @@ from relabel_icc import mluc, rebuild
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(HERE, "template.icm")  # dylanraga 版 (MHC2 以外のタグを流用)
 OUT_DIR = os.path.join(HERE, "profiles")
-GAMMAS = (2.2, 2.4, 2.6)
+GAMMAS = (1.8, 2.0, 2.2, 2.4, 2.6)
 
 
 def is_auto_profile(name: str | None) -> bool:

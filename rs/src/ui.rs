@@ -36,7 +36,7 @@ const PAD: f64 = 16.0;
 const ROW_H: f64 = 64.0;
 const TRACK_DY: f64 = 44.0;
 const GAMMA_H: f64 = 32.0;
-const SEG_W: f64 = 60.0;
+const SEG_W: f64 = 46.0;
 const SEG_GAP: f64 = 6.0;
 const OFF_H: f64 = 32.0;
 
@@ -469,7 +469,8 @@ fn gamma_top(u: &Ui) -> i32 {
 }
 
 fn seg_rect(u: &Ui, j: usize) -> RECT {
-    let start = W - PAD - (3.0 * SEG_W + 2.0 * SEG_GAP) + j as f64 * (SEG_W + SEG_GAP);
+    let n = GAMMAS.len() as f64;
+    let start = W - PAD - (n * SEG_W + (n - 1.0) * SEG_GAP) + j as f64 * (SEG_W + SEG_GAP);
     let top = gamma_top(u);
     RECT { left: px(u, start), top, right: px(u, start + SEG_W), bottom: top + px(u, GAMMA_H) }
 }

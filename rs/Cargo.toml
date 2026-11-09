@@ -2,7 +2,7 @@
 name = "hdr-gamma-follow"
 version = "0.1.0"
 edition = "2024"
-description = "Windows HDR: SDR 明るさに追従して sRGB→Gamma (2.2/2.4/2.6) MHC2 プロファイルを切り替える常駐ツール"
+description = "Windows HDR: SDR 明るさに追従して sRGB→Gamma (1.8/2.0/2.2/2.4/2.6) MHC2 プロファイルを切り替える常駐ツール"
 
 [dependencies]
 md-5 = "0.10"

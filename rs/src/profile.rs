@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 static TEMPLATE: &[u8] = include_bytes!("../assets/template.icm");
 
-pub const GAMMAS: [f64; 3] = [2.2, 2.4, 2.6];
+pub const GAMMAS: [f64; 5] = [1.8, 2.0, 2.2, 2.4, 2.6];
 pub const DEFAULT_GAMMA: f64 = 2.2;
 const MIN_NITS: f64 = 0.0050048828125;
 const MAX_NITS: f64 = 800.0;
